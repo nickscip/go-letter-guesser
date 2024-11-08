@@ -1,47 +1,49 @@
 package main
 
 import (
-	"fmt"
-	"math/rand"
-        "unicode"
+        "log"
+        "os"
+        "net/http"
+
+        "github.com/gorilla/websocket"
 )
 
 func main() {
+	http.Handle("/", http.FileServer(http.Dir("static")))
+	http.HandleFunc("/ws", socketHandler)
 
-	fmt.Println("Welcome! Guess the letter from 'a' to 'z' that I'm thinking of!")
-
-	min := 97 // 'a' in ASCII
-	max := 122 // 'z' in ASCII
-        pick := int32(rand.Intn(max-min+1) + min)
-
-runner:
-	for {
-		fmt.Print("Guess: ")
-		var input string
-		fmt.Scanln(&input)
-
-                runes := []rune(input)
-
-                if len(runes) == 0 {
-                        fmt.Println("Input Error! Enter a real character.")
-                        continue
-                }
-
-                if !unicode.IsLetter(runes[0]) {
-                        fmt.Println("Input Error! Please enter an English letter.")
-                        continue
-                }
-                
-                guess := unicode.ToLower(runes[0])
-
-		switch {
-		case guess == pick:
-			fmt.Println("Correct! You WIN!")
-			break runner
-		case guess < pick:
-			fmt.Println("Too low :(")
-		case guess > pick:
-			fmt.Println("Too high :O")
-		}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
+	log.Printf("Listening on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
+
+var upgrader = websocket.Upgrader{
+        ReadBufferSize: 1024,
+        WriteBufferSize: 1024,
+}
+
+func socketHandler(w http.ResponseWriter, r *http.Request) {
+        conn, err := upgrader.Upgrade(w, r, nil)
+
+        if err != nil {
+                log.Println(err)
+                return
+        }
+
+        for {
+                messageType, p, err := conn.ReadMessage()
+                if err != nil {
+                        log.Println(err)
+                        return
+                }
+                if err := conn.WriteMessage(messageType, p); err != nil {
+                        log.Println(err)
+                        return
+                }
+        }
 }
