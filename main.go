@@ -1,49 +1,22 @@
 package main
 
 import (
-        "log"
-        "os"
-        "net/http"
-
-        "github.com/gorilla/websocket"
+	"flag"
+	"log"
+	"net/http"
 )
 
+var addr = flag.String("addr", ":8080", "http service address")
+
 func main() {
-	http.Handle("/", http.FileServer(http.Dir("static")))
-	http.HandleFunc("/ws", socketHandler)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	flag.Parse()
+	hub := newHub()
+	go hub.run()
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		serveWs(hub, w, r)
+	})
+	err := http.ListenAndServe(*addr, nil)
+	if err != nil {
+		log.Fatal("ListenAndServe: ", err)
 	}
-	log.Printf("Listening on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
-	}
-}
-
-var upgrader = websocket.Upgrader{
-        ReadBufferSize: 1024,
-        WriteBufferSize: 1024,
-}
-
-func socketHandler(w http.ResponseWriter, r *http.Request) {
-        conn, err := upgrader.Upgrade(w, r, nil)
-
-        if err != nil {
-                log.Println(err)
-                return
-        }
-
-        for {
-                messageType, p, err := conn.ReadMessage()
-                if err != nil {
-                        log.Println(err)
-                        return
-                }
-                if err := conn.WriteMessage(messageType, p); err != nil {
-                        log.Println(err)
-                        return
-                }
-        }
 }
