@@ -26,10 +26,17 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+type currentTask string
+
+const (
+	enterSecretWord currentTask = "enter_secret_word"
+)
+
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub         *Hub
+	conn        *websocket.Conn
+	send        chan []byte
+	currentTask string
 }
 
 func (c *Client) readPump() {
@@ -49,8 +56,16 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-                m := broadcastMessage{c, message}
-		c.hub.broadcast <- m
+
+		switch c.currentTask {
+		case "enter_secret_word":
+			c.hub.game.gameMessages <- Message{sender: c, message: message}
+                case "enter_guess_word":
+                        c.hub.game.gameMessages <- Message{sender: c, message: message}
+		default:
+                        m := Message{sender: c, message: message, messageType: MessageBroadcast}
+			c.hub.broadcast <- m
+		}
 	}
 }
 

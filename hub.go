@@ -11,35 +11,44 @@ type Players struct {
 }
 
 func (p *Players) isFull() bool {
-        return p.defender != nil && p.guesser1 != nil && p.guesser2 != nil
+	return p.defender != nil && p.guesser1 != nil && p.guesser2 != nil
 }
 
-type broadcastMessage struct {
-        sender  *Client
-        message []byte
+type MessageType string
+
+const (
+	MessageBroadcast MessageType = "broadcast"
+	MessagePrivate   MessageType = "private"
+)
+
+type Message struct {
+	sender      *Client
+	recipient   *Client
+	message     []byte
+	messageType MessageType
 }
 
 type Hub struct {
 	clients     map[*Client]bool
 	register    chan *Client
-	broadcast   chan broadcastMessage
+	broadcast   chan Message
 	unregister  chan *Client
 	players     *Players
 	playerQueue []*Client
-        game        *Game
-        startGame   chan bool
+	game        *Game
+	startGame   chan bool
 }
 
 func newHub() *Hub {
 	return &Hub{
 		clients:     make(map[*Client]bool),
 		register:    make(chan *Client),
-		broadcast:   make(chan broadcastMessage, 1),
+		broadcast:   make(chan Message, 1),
 		unregister:  make(chan *Client),
 		players:     &Players{},
 		playerQueue: []*Client{},
-                game:        &Game{isGameOn: false},
-                startGame:   make(chan bool, 1),
+		game:        &Game{isGameOn: false, gameMessages: make(chan Message, 1)},
+		startGame:   make(chan bool, 1),
 	}
 }
 
@@ -50,25 +59,34 @@ func (h *Hub) run() {
 			h.clients[client] = true
 			fmt.Println("Client registered")
 			h.assignRole(client)
-                        
-		case m := <-h.broadcast:
-			for client := range h.clients {
-                                if m.sender != nil && client == m.sender {
-                                    continue
-                                }
-                                select {
-                                case client.send <- m.message:
-                                default:
-                                        close(client.send)
-                                        delete(h.clients, client)
-                                }
-			}
 
-                case <-h.startGame:
-                        h.game.players = h.players
-                        h.game.isGameOn = true
-                        go h.game.run()
-                        
+		case m := <-h.broadcast:
+			if m.messageType == MessageBroadcast {
+				// Broadcast to all clients except the sender
+				for client := range h.clients {
+					if client != m.sender {
+						select {
+						case client.send <- m.message:
+						default:
+							close(client.send)
+							delete(h.clients, client)
+						}
+					}
+				}
+			} else if m.messageType == MessagePrivate && m.recipient != nil {
+				// Send only to the specified recipient
+				select {
+				case m.recipient.send <- m.message:
+				default:
+					close(m.recipient.send)
+					delete(h.clients, m.recipient)
+				}
+			}
+		case <-h.startGame:
+			h.game.players = h.players
+			h.game.isGameOn = true
+			go h.game.run()
+
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
@@ -80,12 +98,12 @@ func (h *Hub) run() {
 }
 
 func (h *Hub) assignRole(client *Client) {
-        if h.players.isFull() {
-                h.playerQueue = append(h.playerQueue, client)
-                fmt.Println("Added to player queue")
-                client.send <- []byte("You are in the queue. Please wait.")
-                return
-        }
+	if h.players.isFull() {
+		h.playerQueue = append(h.playerQueue, client)
+		fmt.Println("Added to player queue")
+		client.send <- []byte("You are in the queue. Please wait.")
+		return
+	}
 
 	if h.players.defender == nil {
 		h.players.defender = client
@@ -101,10 +119,10 @@ func (h *Hub) assignRole(client *Client) {
 		client.send <- []byte("You are Guesser 2")
 	}
 
-        if h.players.isFull() && !h.game.isGameOn {
-                h.broadcast <- broadcastMessage{sender: h.players.defender, message: []byte("All roles have been assigned. The game will begin shortly.")}
-                h.startGame <- true
-        }
+	if h.players.isFull() && !h.game.isGameOn {
+                h.broadcast <- Message{messageType: MessageBroadcast, message: []byte("All roles have been assigned. The game will begin shortly.")}
+		h.startGame <- true
+	}
 }
 
 func (h *Hub) removePlayer(client *Client) {
